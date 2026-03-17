@@ -1,0 +1,39 @@
+{
+  "name": "osc-overlay",
+  "version": "2.1.0",
+  "description": "OSC to OBS Browser Source Overlay",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.osc-overlay.app",
+    "productName": "OSC Overlay",
+    "files": [
+      "**/*",
+      "!node_modules/.cache"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.utilities"
+    }
+  },
+  "dependencies": {
+    "express": "^4.22.1",
+    "node-osc": "^9.1.7",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "electron": "^41.0.0",
+    "electron-builder": "^26.8.1"
+  }
+}

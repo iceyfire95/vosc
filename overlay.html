@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSC Overlay</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    body.edit   { background: #181824 !important; }
+
+    #stage { position: absolute; inset: 0; }
+
+    /* ── OSC blocks ─────────────────────────────────────────── */
+    .osc-block {
+      position: absolute;
+      display: flex;
+      flex-direction: row;
+      align-items: baseline;
+      gap: 14px;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .osc-label {
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+      align-self: center;
+    }
+    .osc-value {
+      font-weight: 700;
+      line-height: 1;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 20px rgba(0,0,0,0.15);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Edit mode ───────────────────────────────────────────── */
+    .osc-block.editable         { cursor: grab;    outline: 1px dashed rgba(255,255,255,0.2); border-radius:4px; padding: 6px 10px; }
+    .osc-block.editable:hover   { outline: 1px dashed rgba(255,255,255,0.55); background: rgba(255,255,255,0.04); }
+    .osc-block.editable.drag    { cursor: grabbing; outline: 1px solid rgba(255,255,255,0.9); z-index:10; }
+    .osc-block.editable.sel     { outline: 2px solid #0a84ff; background: rgba(10,132,255,0.07); }
+
+    /* ── Properties panel ───────────────────────────────────── */
+    #props {
+      display: none;
+      position: fixed; top: 20px; right: 20px;
+      width: 272px;
+      background: rgba(18,18,28,0.96);
+      backdrop-filter: blur(14px);
+      border: 1px solid rgba(255,255,255,0.11);
+      border-radius: 14px;
+      padding: 16px;
+      z-index: 200;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+      font-family: -apple-system, system-ui, sans-serif;
+    }
+    #props.on { display: block; }
+
+    .ph { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+    .pt { font-size:12px; font-weight:700; color:rgba(255,255,255,.9); text-transform:uppercase;
+          letter-spacing:.05em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:195px; }
+    .px { background:rgba(255,255,255,.1); border:none; border-radius:50%; width:22px; height:22px;
+          color:rgba(255,255,255,.6); cursor:pointer; font-size:12px;
+          display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+    .px:hover { background:rgba(255,255,255,.22); color:white; }
+
+    .pr { margin-bottom:11px; }
+    .pl { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.07em;
+          color:rgba(255,255,255,.4); margin-bottom:5px; }
+
+    .psr { display:flex; align-items:center; gap:8px; }
+    .ps  { flex:1; -webkit-appearance:none; height:4px; border-radius:2px;
+           background:rgba(255,255,255,.15); outline:none; cursor:pointer; }
+    .ps::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; border-radius:50%;
+           background:#0a84ff; cursor:pointer; box-shadow:0 1px 4px rgba(0,0,0,.4); }
+    .pn  { width:46px; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.12);
+           border-radius:6px; color:white; font-size:12px; font-family:'SF Mono','Menlo',monospace;
+           padding:4px 6px; text-align:right; }
+    .pn:focus { outline:none; border-color:#0a84ff; }
+
+    .psel { width:100%; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.12);
+            border-radius:6px; color:white; font-size:12px; padding:6px 8px; cursor:pointer; }
+    .psel:focus { outline:none; border-color:#0a84ff; }
+    .psel option { background:#1e1e2e; color:white; }
+
+    .pcr { display:flex; align-items:center; gap:8px; }
+    .pc  { width:32px; height:28px; border:1px solid rgba(255,255,255,.15); border-radius:6px;
+           cursor:pointer; padding:0; background:none; }
+    .phx { flex:1; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.12);
+           border-radius:6px; color:white; font-size:12px; font-family:'SF Mono','Menlo',monospace;
+           padding:5px 8px; }
+    .phx:focus { outline:none; border-color:#0a84ff; }
+
+    .props-divider { border:none; border-top:1px solid rgba(255,255,255,.08); margin:10px 0; }
+
+    /* ── Edit toolbar ────────────────────────────────────────── */
+    #edit-bar {
+      display: none;
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.84); backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.14); border-radius: 24px;
+      padding: 9px 18px; align-items: center; gap: 12px;
+      font-family: -apple-system, system-ui, sans-serif;
+      font-size: 12px; color: rgba(255,255,255,0.6);
+      z-index: 100; white-space: nowrap;
+    }
+    body.edit #edit-bar { display: flex; }
+    .edot { width:8px; height:8px; border-radius:50%; background:#ff9f0a; flex-shrink:0; }
+    #edit-bar button { background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.18);
+      border-radius:14px; color:white; cursor:pointer; font-size:12px; padding:5px 13px; }
+    #edit-bar button:hover { background:rgba(255,255,255,.22); }
+
+    /* ── Misc ────────────────────────────────────────────────── */
+    #reconnect { display:none; position:fixed; top:14px; right:14px;
+      background:rgba(0,0,0,.7); color:#ff453a;
+      font-family:-apple-system,system-ui,sans-serif; font-size:11px; font-weight:600;
+      padding:4px 10px; border-radius:20px; }
+    #reconnect.on { display:block; }
+    #saved { display:none; position:fixed; bottom:70px; left:50%; transform:translateX(-50%);
+      background:rgba(48,209,88,.9); color:#000;
+      font-family:-apple-system,system-ui,sans-serif; font-size:12px; font-weight:700;
+      padding:5px 14px; border-radius:20px; pointer-events:none; }
+  </style>
+</head>
+<body>
+
+  <div id="stage"></div>
+
+  <!-- Properties panel -->
+  <div id="props">
+    <div class="ph">
+      <span class="pt" id="pt">—</span>
+      <button class="px" onclick="deselect()">✕</button>
+    </div>
+
+    <div class="pr">
+      <div class="pl">Value Size</div>
+      <div class="psr">
+        <input class="ps" type="range" id="p-vs" min="12" max="300"
+               oninput="syncN('p-vs','p-vsn'); applyProp('fontSize',+this.value)">
+        <input class="pn" type="number" id="p-vsn" min="12" max="300"
+               oninput="syncS('p-vsn','p-vs'); applyProp('fontSize',+this.value)">
+      </div>
+    </div>
+
+    <div class="pr">
+      <div class="pl">Label Size</div>
+      <div class="psr">
+        <input class="ps" type="range" id="p-ls" min="8" max="120"
+               oninput="syncN('p-ls','p-lsn'); applyProp('labelFontSize',+this.value)">
+        <input class="pn" type="number" id="p-lsn" min="8" max="120"
+               oninput="syncS('p-lsn','p-ls'); applyProp('labelFontSize',+this.value)">
+      </div>
+    </div>
+
+    <div class="pr">
+      <div class="pl">Font</div>
+      <select class="psel" id="p-font" onchange="applyProp('fontFamily',this.value)">
+        <option value="mono">Monospace</option>
+        <option value="sans">System Sans</option>
+        <option value="helvetica">Helvetica Neue</option>
+        <option value="arial">Arial</option>
+        <option value="courier">Courier</option>
+        <option value="georgia">Georgia</option>
+        <option value="impact">Impact</option>
+      </select>
+    </div>
+
+    <hr class="props-divider">
+
+    <div class="pr">
+      <div class="pl">Value Colour</div>
+      <div class="pcr">
+        <input class="pc" type="color" id="p-vc"
+               oninput="syncH('p-vc','p-vch'); applyProp('color',this.value)">
+        <input class="phx" type="text" id="p-vch" maxlength="7"
+               oninput="syncC('p-vch','p-vc'); applyHex('color','p-vch')">
+      </div>
+    </div>
+
+    <div class="pr">
+      <div class="pl">Label Colour</div>
+      <div class="pcr">
+        <input class="pc" type="color" id="p-lc"
+               oninput="syncH('p-lc','p-lch'); applyProp('labelColor',this.value)">
+        <input class="phx" type="text" id="p-lch" maxlength="7"
+               oninput="syncC('p-lch','p-lc'); applyHex('labelColor','p-lch')">
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit toolbar -->
+  <div id="edit-bar">
+    <span class="edot"></span>
+    <span>Click to select · drag to move</span>
+    <button onclick="window.close()">Done</button>
+  </div>
+
+  <div id="reconnect">⚠ Reconnecting…</div>
+  <div id="saved">Saved ✓</div>
+
+  <script>
+    // ── Font map ──────────────────────────────────────────────────────────────
+    const FONTS = {
+      mono:      "'SF Mono','Menlo','Courier New',monospace",
+      sans:      "-apple-system,'SF Pro Display',system-ui,sans-serif",
+      helvetica: "'Helvetica Neue',Helvetica,Arial,sans-serif",
+      arial:     "Arial,sans-serif",
+      courier:   "'Courier New',Courier,monospace",
+      georgia:   "Georgia,'Times New Roman',serif",
+      impact:    "Impact,'Arial Black',sans-serif"
+    };
+    const rf = k => FONTS[k] || FONTS.mono;
+
+    // ── Mode ──────────────────────────────────────────────────────────────────
+    const editMode = new URLSearchParams(window.location.search).has('edit');
+    if (editMode) document.body.classList.add('edit');
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    let inputs = [], vals = {}, bgColor = '#00ff00', selectedId = null;
+
+    const stage      = document.getElementById('stage');
+    const reconnEl   = document.getElementById('reconnect');
+    const savedEl    = document.getElementById('saved');
+    const propsEl    = document.getElementById('props');
+
+    // ── Apply background ──────────────────────────────────────────────────────
+    function applyBg(color) {
+      if (!editMode) document.body.style.background = color || '#00ff00';
+    }
+
+    // ── Render ────────────────────────────────────────────────────────────────
+    function getPos(inp, i) {
+      if (inp.x !== undefined && inp.y !== undefined) return { x: inp.x, y: inp.y };
+      return { x: 40, y: 40 + i * ((inp.fontSize || 72) + 24) };
+    }
+
+    function render() {
+      stage.innerHTML = inputs.map((inp, i) => {
+        const val    = vals[inp.address] ?? '—';
+        const vSize  = inp.fontSize      || 72;
+        const lSize  = inp.labelFontSize || 13;
+        const vColor = inp.color         || '#ffffff';
+        const lColor = inp.labelColor    || 'rgba(255,255,255,0.6)';
+        const font   = rf(inp.fontFamily);
+        const { x, y } = getPos(inp, i);
+        const sel = editMode && inp.id === selectedId ? ' sel' : '';
+        return `
+          <div class="osc-block${editMode?' editable':''}${sel}" id="blk-${inp.id}"
+               style="left:${x}px;top:${y}px">
+            <span class="osc-label" id="lbl-${inp.id}"
+                  style="font-size:${lSize}px;color:${lColor};font-family:${font}">${esc(inp.label)}</span>
+            <span class="osc-value" id="val-${inp.id}"
+                  style="font-size:${vSize}px;color:${vColor};font-family:${font}">${esc(val)}</span>
+          </div>`;
+      }).join('');
+
+      if (editMode) inputs.forEach(inp => {
+        const el = document.getElementById(`blk-${inp.id}`);
+        if (el) makeDraggable(el, inp.id);
+      });
+    }
+
+    function patchValue(address, value) {
+      vals[address] = value;
+      const inp = inputs.find(i => i.address === address);
+      if (!inp) return;
+      const el = document.getElementById(`val-${inp.id}`);
+      if (el) el.textContent = value; else render();
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // ── Drag ──────────────────────────────────────────────────────────────────
+    let drag = null, moved = false;
+
+    function makeDraggable(el, id) {
+      el.addEventListener('mousedown', e => {
+        e.preventDefault(); moved = false;
+        drag = { el, id, sx: e.clientX, sy: e.clientY,
+                 ox: parseInt(el.style.left)||0, oy: parseInt(el.style.top)||0 };
+        el.classList.add('drag');
+      });
+    }
+
+    document.addEventListener('mousemove', e => {
+      if (!drag) return;
+      const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+      if (Math.abs(dx)>3||Math.abs(dy)>3) moved = true;
+      drag.el.style.left = Math.max(0, drag.ox+dx) + 'px';
+      drag.el.style.top  = Math.max(0, drag.oy+dy) + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!drag) return;
+      drag.el.classList.remove('drag');
+      if (!moved) selectBlock(drag.id);
+      else savePositions();
+      drag = null;
+    });
+
+    stage.addEventListener('mousedown', e => { if (e.target===stage) deselect(); });
+
+    // ── Selection ─────────────────────────────────────────────────────────────
+    function selectBlock(id) {
+      selectedId = id;
+      document.querySelectorAll('.osc-block').forEach(el => el.classList.remove('sel'));
+      document.getElementById(`blk-${id}`)?.classList.add('sel');
+
+      const inp = inputs.find(i => i.id === id);
+      if (!inp) return;
+
+      document.getElementById('pt').textContent = inp.label || inp.address;
+      setV('p-vs',   inp.fontSize      || 72);
+      setV('p-vsn',  inp.fontSize      || 72);
+      setV('p-ls',   inp.labelFontSize || 13);
+      setV('p-lsn',  inp.labelFontSize || 13);
+      document.getElementById('p-font').value = inp.fontFamily || 'mono';
+
+      const vc = inp.color      || '#ffffff';
+      const lc = inp.labelColor || '#999999';
+      setV('p-vc',  toHex6(vc)); setV('p-vch', toHex6(vc));
+      setV('p-lc',  toHex6(lc)); setV('p-lch', toHex6(lc));
+
+      propsEl.classList.add('on');
+    }
+
+    function deselect() {
+      selectedId = null;
+      document.querySelectorAll('.osc-block').forEach(el => el.classList.remove('sel'));
+      propsEl.classList.remove('on');
+    }
+
+    // ── Apply property ────────────────────────────────────────────────────────
+    function applyProp(key, value) {
+      if (!selectedId) return;
+      const inp = inputs.find(i => i.id === selectedId);
+      if (!inp) return;
+      inp[key] = value;
+
+      const font = rf(inp.fontFamily);
+      const valEl = document.getElementById(`val-${inp.id}`);
+      const lblEl = document.getElementById(`lbl-${inp.id}`);
+      if (valEl) {
+        valEl.style.fontSize   = (inp.fontSize||72)+'px';
+        valEl.style.color      = inp.color || '#ffffff';
+        valEl.style.fontFamily = font;
+      }
+      if (lblEl) {
+        lblEl.style.fontSize   = (inp.labelFontSize||13)+'px';
+        lblEl.style.color      = inp.labelColor || 'rgba(255,255,255,0.6)';
+        lblEl.style.fontFamily = font;
+      }
+      sendUpdate(selectedId, { [key]: value });
+    }
+
+    function applyHex(key, hexInputId) {
+      const hex = document.getElementById(hexInputId).value;
+      if (/^#[0-9a-fA-F]{6}$/.test(hex)) applyProp(key, hex);
+    }
+
+    function sendUpdate(id, changes) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'update-input', id, changes }));
+        flashSaved();
+      }
+    }
+
+    function savePositions() {
+      const positions = inputs.map(inp => {
+        const el = document.getElementById(`blk-${inp.id}`);
+        if (!el) return null;
+        return { id: inp.id, x: parseInt(el.style.left)||0, y: parseInt(el.style.top)||0 };
+      }).filter(Boolean);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'save-positions', positions }));
+        flashSaved();
+      }
+    }
+
+    function flashSaved() {
+      savedEl.style.display = 'block';
+      clearTimeout(savedEl._t);
+      savedEl._t = setTimeout(() => { savedEl.style.display='none'; }, 1400);
+    }
+
+    // ── Panel helpers ─────────────────────────────────────────────────────────
+    const setV  = (id, v) => { document.getElementById(id).value = v; };
+    const syncN = (sId,nId) => setV(nId, document.getElementById(sId).value);
+    const syncS = (nId,sId) => setV(sId, document.getElementById(nId).value);
+    const syncH = (cId,hId) => setV(hId, document.getElementById(cId).value);
+    const syncC = (hId,cId) => { const h=document.getElementById(hId).value; if(/^#[0-9a-fA-F]{6}$/.test(h)) setV(cId,h); };
+    const toHex6 = s => { if(/^#[0-9a-fA-F]{6}$/.test(s)) return s; return '#999999'; };
+
+    // ── WebSocket ─────────────────────────────────────────────────────────────
+    let ws = null, retryTimer = null;
+
+    function connect() {
+      const port = window.location.port || '3000';
+      ws = new WebSocket(`ws://localhost:${port}`);
+
+      ws.onopen = () => { reconnEl.classList.remove('on'); clearTimeout(retryTimer); retryTimer=null; };
+
+      ws.onmessage = ({ data }) => {
+        let msg; try { msg = JSON.parse(data); } catch { return; }
+
+        if (msg.type === 'init' || msg.type === 'config-update') {
+          inputs = msg.inputs || [];
+          if (msg.values) Object.assign(vals, msg.values);
+          if (msg.bgColor) { bgColor = msg.bgColor; applyBg(bgColor); }
+          render();
+          if (selectedId && inputs.find(i => i.id === selectedId)) selectBlock(selectedId);
+          else deselect();
+        } else if (msg.type === 'value') {
+          patchValue(msg.address, msg.value);
+        }
+      };
+
+      ws.onclose = () => { reconnEl.classList.add('on'); scheduleReconnect(); };
+      ws.onerror = () => ws.close();
+    }
+
+    function scheduleReconnect() {
+      if (retryTimer) return;
+      retryTimer = setTimeout(() => { retryTimer=null; connect(); }, 2000);
+    }
+
+    fetch('/api/state')
+      .then(r => r.json())
+      .then(({ inputs: ins, values, bgColor: bg }) => {
+        inputs = ins || []; if (values) Object.assign(vals, values);
+        if (bg) { bgColor = bg; applyBg(bgColor); }
+        render();
+      })
+      .catch(()=>{})
+      .finally(connect);
+  </script>
+</body>
+</html>
